@@ -45,16 +45,21 @@ if __name__ == '__main__':
     test_data = torchvision.datasets.MNIST(root='../ImageData', train=False, transform=toTensor,
                                         download=True)  # download testing data set
 
+    # get one image in the image dataset
     image,label = test_data[0]
-    Imag=toPIL(image)
     image = image.to(device)
-    Imag.show()
+
+    # show the image
+    # Imag = toPIL(image)
+    # Imag.show()
+
+    # calculate the perturbation
     grad_sign = FGSM(net,image,label)
-    image_perturbated = (image+0.25*grad_sign).numpy()
+    image_perturbated = (image+0.25*grad_sign).cpu().numpy()
     image_perturbated = np.clip(image_perturbated,0,1)
-    image_perturbated = torch.Tensor(image_perturbated)
-    Imag_perturbated=toPIL(image_perturbated.squeeze(0))
-    Imag_perturbated.show()
+    image_perturbated = torch.Tensor(image_perturbated).to(device)
+    # Imag_perturbated=toPIL(image_perturbated.squeeze(0))
+    # Imag_perturbated.show()
     
     net.eval()
     
