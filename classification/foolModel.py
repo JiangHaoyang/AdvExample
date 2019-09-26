@@ -12,18 +12,18 @@ def FGSM(net, image, label):
     net.eval()
     
     #copy image as valid input
-    x = torch.autograd.Variable(image[None,:,:],requires_grad=True)
-    y = torch.Tensor([label]).long().to(device)
+    x = torch.autograd.Variable(image,requires_grad=True)
+    y = label
     #define loss
     loss_fn = nn.CrossEntropyLoss()
 
     scores = net(x)
     loss = loss_fn(scores,y)
     loss.backward()
-    #grad_sign = x.grad/np.linalg.norm(x.grad)
-    grad_sign = x.grad.sign()
+    grad_sign = x.grad/torch.max(x)
+    #grad_sign = x.grad.sign()
     return grad_sign
-    
+
 
 
 
@@ -47,15 +47,18 @@ if __name__ == '__main__':
 
     # get one image in the image dataset
     image,label = test_data[0]
-    image = image.to(device)
+
+    netInput = image.unsqueeze(0).to(device)
+    rightLabel = torch.Tensor([label]).long().to(device)
 
     # show the image
     # Imag = toPIL(image)
     # Imag.show()
 
     # calculate the perturbation
-    grad_sign = FGSM(net,image,label)
-    image_perturbated = (image+0.25*grad_sign).cpu().numpy()
+    grad_sign = FGSM(net,netInput,rightLabel)
+
+    image_perturbated = (image+0.25*grad_sign.cpu()).numpy()
     image_perturbated = np.clip(image_perturbated,0,1)
     image_perturbated = torch.Tensor(image_perturbated).to(device)
     # Imag_perturbated=toPIL(image_perturbated.squeeze(0))
@@ -64,7 +67,6 @@ if __name__ == '__main__':
     net.eval()
     
     print(net(image_perturbated))
-    print(net(image.unsqueeze(0)))
+    print(net(image.unsqueeze(0).to(device)))
     _,predictedLabel = torch.max(net(image_perturbated),1)
     print(predictedLabel)
-    
