@@ -10,6 +10,8 @@ from torch.autograd.gradcheck import zero_gradients
 
 def qFool(net, image, label):
     
+    toPIL=transforms.ToPILImage()
+
     backIsAvailable = True
     
     # set the net in eval mode
@@ -22,25 +24,39 @@ def qFool(net, image, label):
         if net(pertImage).argmax() != label:
             break
     # push the pert point just outside the boundary
-    pertImage = searchBound(net, image, label, pertImage - image)
+    pertImage = torch.autograd.Variable(searchBound(net, image, label, pertImage - image),requires_grad = True)
+    iter = 0
+    print('finished initial')
     
-    # calculate the normal vector of the boundary
-    if backIsAvailable:
-        out = net(pertImage)
-        out[0,label].backward( retain_graph = True )
-        normalVector = pertImage.grad.clone()
-        normalVector = normalVector / normalVector.norm()
-        pass
-    else:
-        pass
-    
-    # calculate the step direction
-    # how does high dimensional outer product define?
-    
-    
-    
-    
-    return 0
+    while (iter < 50) & ((image - pertImage).norm().cpu().detach().numpy() >= 100 ):
+    #while (iter < 50) & ((image - pertImage).norm() >= 100 ) & (net(pertImage).argmax() == label):
+        # calculate the normal vector of the boundary
+        if backIsAvailable:
+            out = net(pertImage)
+            out[0,label].backward( retain_graph = True )
+            normalVector = pertImage.grad.clone()
+            normalVector = normalVector / normalVector.norm()
+            pass
+        else:
+            pass
+        
+        # calculate the step direction
+        directionToOriImage = image - pertImage
+        dirProjOnNormal = normalVector * (normalVector * directionToOriImage).sum()
+        dirOfStep = directionToOriImage - dirProjOnNormal
+        
+        pertImage = pertImage + dirOfStep
+        pertImage = torch.autograd.Variable(searchBound(net, image, label, pertImage - image),requires_grad = True)
+        
+        iter += 1
+        print(iter)
+        print((pertImage - image).norm())
+        print('####################################')
+        # showI = pertImage.clone()
+        # showI = toPIL(showI.cpu().squeeze(0))
+        # showI.show()
+        
+    return pertImage
 
 def searchBound(net, image, label, direction):
     while net(image + direction).argmax() == label:
@@ -48,7 +64,6 @@ def searchBound(net, image, label, direction):
 
     pertNorm = direction.norm()
     while( pertNorm >= 1 ):
-        print(pertNorm)
         pertNorm = pertNorm / 2
         if net(image + direction).argmax() != label:
             direction -= direction * pertNorm
