@@ -12,8 +12,8 @@ def qFool(net, image, label):
     
     toPIL=transforms.ToPILImage()
 
-    backIsAvailable = True
-    
+    backwardIsAvailable = True
+
     # set the net in eval mode
     net.eval()
     
@@ -26,35 +26,29 @@ def qFool(net, image, label):
     # push the pert point just outside the boundary
     pertImage = torch.autograd.Variable(searchBound(net, image, label, pertImage - image),requires_grad = True)
     iter = 0
-    print('finished initial')
     
-    while (iter < 50) & ((image - pertImage).norm().cpu().detach().numpy() >= 100 ):
-    #while (iter < 50) & ((image - pertImage).norm() >= 100 ) & (net(pertImage).argmax() == label):
+    while (iter < 50) & ((image - pertImage).norm().cpu().detach().numpy() >= 1 ):
+        
         # calculate the normal vector of the boundary
-        if backIsAvailable:
+        if backwardIsAvailable:
             out = net(pertImage)
             out[0,label].backward( retain_graph = True )
             normalVector = pertImage.grad.clone()
             normalVector = normalVector / normalVector.norm()
             pass
         else:
+            print('else is empty')
             pass
         
         # calculate the step direction
         directionToOriImage = image - pertImage
         dirProjOnNormal = normalVector * (normalVector * directionToOriImage).sum()
         dirOfStep = directionToOriImage - dirProjOnNormal
-        
         pertImage = pertImage + dirOfStep
+
         pertImage = torch.autograd.Variable(searchBound(net, image, label, pertImage - image),requires_grad = True)
         
         iter += 1
-        print(iter)
-        print((pertImage - image).norm())
-        print('####################################')
-        # showI = pertImage.clone()
-        # showI = toPIL(showI.cpu().squeeze(0))
-        # showI.show()
         
     return pertImage
 
@@ -62,13 +56,16 @@ def searchBound(net, image, label, direction):
     while net(image + direction).argmax() == label:
         direction = direction * 2
 
-    pertNorm = direction.norm()
-    while( pertNorm >= 1 ):
+    oriDirection = direction.clone()
+    pertNorm = 1
+    while (oriDirection.norm() * pertNorm >= 1) :
         pertNorm = pertNorm / 2
         if net(image + direction).argmax() != label:
-            direction -= direction * pertNorm
+            direction -= (oriDirection * pertNorm)
         else:
-            direction += direction * pertNorm
+            direction += (oriDirection * pertNorm)
+    if net(image + direction).argmax() == label:
+        direction += (oriDirection * pertNorm)
     return (image + direction)
 
 
@@ -101,7 +98,16 @@ if __name__ == '__main__':
     # Imag.show()
 
     # calculate the perturbation
-    grad_sign = qFool(net,netInput,rightLabel)
+    pertImage = qFool(net,netInput,rightLabel)
+    print(net(pertImage).argmax())
+    print(net(pertImage))
+
+    validImage = torch.clamp((pertImage.cpu()),0,1).to(device)
+    print(net(validImage).argmax())
+    print(net(validImage))
+
+    showI = toPIL(validImage.squeeze(0))
+    showI.show()
 
     # image_perturbated = torch.clamp((image+0.25*grad_sign.cpu()),0,1).to(device)
 
