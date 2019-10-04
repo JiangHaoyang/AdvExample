@@ -1,14 +1,6 @@
-import sys
-import MyModel
 import torch
-import torchvision
-import torchvision.transforms as transforms
 import torch.nn as nn
 import numpy as np
-
-from torch.autograd import Variable
-import copy
-from torch.autograd.gradcheck import zero_gradients
 
 
 def FGSM(net, image, label):
@@ -16,6 +8,9 @@ def FGSM(net, image, label):
     #set the net in eval mode
     net.eval()
     
+    # set eps
+    eps = 0.25
+
     #copy image as valid input
     x = image.clone()
     x = torch.autograd.Variable(x,requires_grad=True)
@@ -28,7 +23,7 @@ def FGSM(net, image, label):
     loss.backward()
     # grad_sign = x.grad/torch.max(x)
     grad_sign = x.grad.sign()
-    return (0.25*grad_sign+image)
+    return (eps*grad_sign+image)
 
 
 def DeepFool(net, oriImage, label):
@@ -36,10 +31,16 @@ def DeepFool(net, oriImage, label):
     # set the net in eval mode
     net.eval()
 
+    # set max iter
+    maxIter = 50
+    # set eps
+    eps = 1.8
+    # set overshoot
+    overshoot = 0.02
     #copy image as valid input
     image = oriImage.clone()
-    pertImage = torch.autograd.Variable( image , requires_grad = True )
-
+    totalPert = torch.zeros(image.size()).to(oriImage.device)
+    pertImage = torch.autograd.Variable( (image + totalPert) , requires_grad = True )
     # pass forward
     out = net( pertImage )
 
@@ -48,7 +49,7 @@ def DeepFool(net, oriImage, label):
     classNum = out.numel()
     iter = 0
 
-    while (out.argmax() == label) & (iter < 50):
+    while (out.argmax() == label) & (iter < maxIter):
         
         dist = np.inf
         # backward to calculate the gradient
@@ -76,7 +77,8 @@ def DeepFool(net, oriImage, label):
                 gradient = gradientPrime_k.clone()
         
         pert = (dist+1e-4) * gradient / gradient.norm()
-        pertImage = torch.autograd.Variable( pertImage + pert * 1.02 , requires_grad = True )
+        totalPert = totalPert + pert
+        pertImage = torch.autograd.Variable( image + totalPert*(1+overshoot) , requires_grad = True )
         iter += 1
         out = net( pertImage )
         sortedOut = (-1*out).argsort() # sort in invert order
@@ -84,18 +86,21 @@ def DeepFool(net, oriImage, label):
     return pertImage
 
 
-def qFool(net, image, label, startingPoint = None):
-    
-    toPIL=transforms.ToPILImage()
+def BoundSearchAttack(net, image, label, startingPoint = None):
 
     backwardIsAvailable = True
+
+    # set max iter
+    maxIter = 100
+    # set eps
+    eps = 1.8
 
     # set the net in eval mode
     net.eval()
     randomStart = True
     if randomStart:
         # randomly select the starting point
-        pertImage = []
+        pertImage = torch.zeros(image.size()).to(image.device)
         while True:
             pertImage = torch.randn(image.size()).to(image.device) # sample from standard normal distribution
             pertImage = pertImage/5+0.5 # 0.5 mean and 1/5 variance, make sure the pert image is valid
@@ -108,8 +113,7 @@ def qFool(net, image, label, startingPoint = None):
     # push the pert point just outside the boundary
     pertImage = torch.autograd.Variable(searchBound(net, image, label, pertImage - image),requires_grad = True)
     iter = 0
-    
-    while (iter < 100) & ((image - pertImage).norm().cpu().detach().numpy() >= 1.8 ):
+    while (iter < maxIter) & ((image - pertImage).norm().cpu().detach().numpy() >= eps ):
         
         # calculate the normal vector of the boundary
         if backwardIsAvailable:
@@ -126,10 +130,9 @@ def qFool(net, image, label, startingPoint = None):
         directionToOriImage = image - pertImage
         dirProjOnNormal = normalVector * (normalVector * directionToOriImage).sum()
         dirOfStep = directionToOriImage - dirProjOnNormal
-        pertImage = pertImage + 0.25*dirOfStep
+        pertImage = pertImage + 0.3*dirOfStep
         pertImage = torch.autograd.Variable(searchBound(net, image, label, pertImage - image),requires_grad = True)
         iter += 1
-    print(iter)
     return pertImage
 
 
@@ -154,61 +157,3 @@ def searchBound(net, image, label, direction):
     pertImage[pertImage>1] = 1
 
     return pertImage
-
-
-if __name__ == '__main__':
-    
-    toPIL=transforms.ToPILImage()
-    toTensor=transforms.ToTensor()
-    # device configuration
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-    # load model
-    net = MyModel.LeNet_my(10).to(device)
-
-    # load pretrained parameters
-    checkpoint = torch.load('../pretrainModel/ResNet_MNIST.ckpt',map_location = device)
-    net.load_state_dict(checkpoint)
-
-    # load MNIST dataset
-    test_data = torchvision.datasets.MNIST(root='../ImageData', train=False, transform=toTensor,
-                                        download=True)  # download testing data set
-
-    # get one image in the image dataset
-    image,label = test_data[0]
-
-    netInput = image.unsqueeze(0).to(device)
-
-    rightLabel = torch.Tensor([label]).long().to(device)
-
-    i = 30
-    rand = np.random.randint(0, len(test_data),[i,1])
-    coefficient = np.random.rand(i)
-    coefficient = coefficient / sum(coefficient)
-    startingPoint = torch.zeros(image.size()).to(device)
-    for k in range(i):
-        startingPoint += test_data[int(rand[k])][0] * coefficient[k]
-        pass
-    # calculate the perturbation
-    pertImage = qFool(net,netInput,rightLabel,startingPoint)
-
-    print(net(netInput).argmax())
-    print('########################')
-    print(net(pertImage).argmax())
-    print('########################')
-    
-    # set image to valid
-    validPertImage = pertImage.clone()
-    validPertImage[pertImage<0] = 0
-    validPertImage[pertImage>1] = 1
-    print(net(validPertImage).argmax())
-    print('########################')
-
-    print((validPertImage-netInput).norm())
-
-    # show the pert image
-    PILPertImage = validPertImage.squeeze(0).cpu()
-    PILPertImage = toPIL(PILPertImage)
-    #PILPertImage.show()
-    oriImage = toPIL(image)
-    #oriImage.show()
