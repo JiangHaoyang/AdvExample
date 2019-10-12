@@ -94,8 +94,7 @@ if __name__ == '__main__':
                 dir1 = image.to(device)-centerImage
             if label == 7:
                 dir2 = image.to(device)-centerImage
-            pass
-        pass
+    print((dir1-dir2).norm())
 
     dir1 = dir1 / dir1.norm()
     dir2 = dir2 / dir2.norm()
