@@ -25,6 +25,30 @@ def FGSM(net, image, label):
     grad_sign = x.grad.sign()
     return (eps*grad_sign+image)
 
+def IFGSM(net, image, label):
+
+    #set the net in eval mode
+    net.eval()
+    iter = 20
+    # set eps
+    eps = 8/256/iter*2
+    grad_sign = torch.zeros(image.size()).to(image.device)
+    for i in range(iter):
+        #copy image as valid input
+        x = image.clone()
+        x = torch.autograd.Variable(grad_sign+x,requires_grad=True)
+        y = label
+        #define loss
+        loss_fn = nn.CrossEntropyLoss()
+
+        scores = net(x)
+        loss = loss_fn(scores,y)
+        loss.backward()
+        # grad_sign = x.grad/torch.max(x)
+        grad_sign += eps * x.grad.sign()
+    grad_sign[grad_sign < -(2/256) ] = -(2/256)
+    grad_sign[grad_sign > (2/256) ] = (2/256)
+    return (grad_sign+image)
 
 def DeepFool(net, oriImage, label):
 
@@ -89,21 +113,23 @@ def DeepFool(net, oriImage, label):
 def BoundSearchAttack(net, image, label, startingPoint = None):
 
     backwardIsAvailable = True
-
     # set max iter
-    maxIter = 100
+    maxIter = 15
     # set eps
-    eps = 1.8
+    eps = 1
+    # set loss function
+    loss_fn = nn.CrossEntropyLoss()
 
     # set the net in eval mode
     net.eval()
-    randomStart = True
-    if randomStart:
+    if startingPoint is None:
         # randomly select the starting point
         pertImage = torch.zeros(image.size()).to(image.device)
-        while True:
+        i = 0
+        while (i < 10):
+            i += 1
             pertImage = torch.randn(image.size()).to(image.device) # sample from standard normal distribution
-            pertImage = pertImage/5+0.5 # 0.5 mean and 1/5 variance, make sure the pert image is valid
+            pertImage = pertImage/3+0.5 # 0.5 mean and 1/5 variance, make sure the pert image is valid
             if net(pertImage).argmax() != label:
                 break
     else:
@@ -118,8 +144,20 @@ def BoundSearchAttack(net, image, label, startingPoint = None):
         # calculate the normal vector of the boundary
         if backwardIsAvailable:
             out = net(pertImage)
-            out[0,label].backward( retain_graph = True )
-            normalVector = pertImage.grad.clone()
+            if (out.argmax() == label):
+                out[0,label].backward( retain_graph = True )
+                normalVector = pertImage.grad.clone()
+                pertImage.grad.zero_()
+                pass
+            else:
+                out[0,label].backward( retain_graph = True )
+                w1 = pertImage.grad.clone()
+                pertImage.grad.zero_()
+                out[0,out.argmax()].backward( retain_graph = True )
+                w2 = pertImage.grad.clone()
+                pertImage.grad.zero_()
+                normalVector = w1 - w2
+                pass
             normalVector = normalVector / normalVector.norm()
             pass
         else:
@@ -130,7 +168,7 @@ def BoundSearchAttack(net, image, label, startingPoint = None):
         directionToOriImage = image - pertImage
         dirProjOnNormal = normalVector * (normalVector * directionToOriImage).sum()
         dirOfStep = directionToOriImage - dirProjOnNormal
-        pertImage = pertImage + 0.3*dirOfStep
+        pertImage = pertImage + 0.25*dirOfStep
         pertImage = torch.autograd.Variable(searchBound(net, image, label, pertImage - image),requires_grad = True)
         iter += 1
     return pertImage
@@ -142,7 +180,7 @@ def searchBound(net, image, label, direction):
 
     oriDirection = direction.clone()
     pertNorm = 1
-    while (oriDirection.norm() * pertNorm >= 1) :
+    while (oriDirection.norm() * pertNorm >= 0.5) :
         pertNorm = pertNorm / 2
         if net(image + direction).argmax() != label:
             direction -= (oriDirection * pertNorm)
